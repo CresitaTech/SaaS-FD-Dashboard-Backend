@@ -1,5 +1,6 @@
 const express = require('express');
 const cors = require('cors');
+const path = require('path');
 const dotenv = require('dotenv');
 const authRoutes = require('./routes/authRoutes');
 const excelRoute = require('./routes/excelRoutes');
@@ -13,11 +14,12 @@ const app = express();
 
 app.use(cors({
   origin:"*",
-  methods: ["GET", "POST","PATCH","PUT"], 
+  methods: ["GET","DELETE", "POST","PATCH","PUT"], 
   credentials:true
 }))
 
 app.use(express.json());
+app.use("/uploads", express.static("uploads"));
 
 app.get('/',async(req,res)=>{
     res.send("Hello inventory backend");

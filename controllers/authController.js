@@ -1,7 +1,9 @@
 const pool = require("../db/db");
 const bcrypt = require("bcryptjs");
 const jwt = require('jsonwebtoken');
+const { sendEmail } = require("../service/mail");
 
+const frontendUrl = 'http://198.38.88.235:5179/login'
 
 exports.superAdmin = async(req,res) =>{
     const { email,password } = req.body;
@@ -99,9 +101,9 @@ exports.loginSuperAdmin = async (req, res) => {
 
 exports.loginCompanyAdmin = async(req,res) =>{
     let connection
-    const { companyName,password } = req.body;
+    const { email,password } = req.body;
     try {
-        if(!companyName || !password){
+        if(!email || !password){
             return res.status(404).json({
                 message:"Company Name and password is requried"
             })
@@ -109,8 +111,8 @@ exports.loginCompanyAdmin = async(req,res) =>{
         connection = await pool.getConnection();
 
         const [row] = await connection.query(
-            "SELECT id,company,password FROM users WHERE company = ? AND role_id = ?",
-            [companyName,7]
+            "SELECT id,email,company,logo,password FROM users WHERE email = ? AND role_id = ?",
+            [email,7]
         )
         if(row.length === 0){
             return res.status(409).json({
@@ -128,7 +130,7 @@ exports.loginCompanyAdmin = async(req,res) =>{
         }
         // generate JWT
         const token = jwt.sign(
-        { id: user.id, company: user.company, role_id: user.role_id },
+        { id: user.id,email:user.email,logo:user.logo, company: user.company, role_id: user.role_id },
         process.env.JWT_SECRET,
         { expiresIn: "24h" }
         );
@@ -138,7 +140,8 @@ exports.loginCompanyAdmin = async(req,res) =>{
             token,
             user:{
                 userId:user.id,
-                companyName:user.company
+                companyName:user.company,
+                logo:user.logo
             }
         })
     } catch (error) {
@@ -148,7 +151,9 @@ exports.loginCompanyAdmin = async(req,res) =>{
 }
 
 exports.registerUser = async(req,res) =>{
-    const { firstName,lastName,userName,email,password,role } = req.body;
+    const {id} = req.user;
+    console.log("userid:",id);
+    const { firstName,lastName,userName,email,password,role,companyName } = req.body;
 
     let connection
     try {
@@ -192,11 +197,29 @@ exports.registerUser = async(req,res) =>{
         //hash the password
         const hashedPassword = await bcrypt.hash(password,10);
 
+        // role mapping
+            const roleMap = {
+            1: "Supply Chain Leadership",
+            2: "Supply Chain Operations",
+            3: "Finance",
+            4: "CFO/Head of finance",
+            5: "CPO"
+        };
+
+        const roleName = roleMap[role] || "Unknown";
+        //send email to the user
+        await sendEmail({
+            email:email,
+            credential:`URL:${frontendUrl}/${companyName}, Email: ${email}, Password: ${password}, Role: ${roleName}`
+        });
+
         //store in the database
         await connection.query(
-            "INSERT INTO users (firstName,lastName,userName,email,password,role_id) VALUES(?,?,?,?,?,?)",
-            [firstName,lastName,userName,email,hashedPassword,role]
+            "INSERT INTO users (firstName,lastName,userName,email,password,role_id,registered_by,company) VALUES(?,?,?,?,?,?,?,?)",
+            [firstName,lastName,userName,email,hashedPassword,role,id,companyName]
         )
+        
+
         return res.status(201).json({
             message: 'User registered successfully'
         });
@@ -232,19 +255,31 @@ exports.loginUser = async(req,res) =>{
             [email,role_id]
         )
         console.log("User:",user);
+        
         if (user.length === 0) {
           return res
             .status(401)
             .json({ message: "Invalid email, password or role" });
         }
         const userData = user[0]
-
+       
         //verify password
         const isPasswordValid = await bcrypt.compare(password,userData.password);
         if (!isPasswordValid) {
           return res
             .status(401)
             .json({ message: "Invalid email/mobile or password" });
+        }
+
+        let logo = userData.logo;
+        if (userData.registered_by) {
+        const [adminRow] = await connection.query(
+            "SELECT logo FROM users WHERE id = ?",
+            [userData.registered_by]
+        );
+        if (adminRow.length > 0) {
+            logo = adminRow[0].logo;
+        }
         }
 
         //create jwt token
@@ -260,10 +295,11 @@ exports.loginUser = async(req,res) =>{
         res.status(200).json({
             message:'User logged in successfully',
             token,
+            companyLogo:logo,
             user:{
                 id:userData.id,
                 email:userData.email,
-                role_id:userData.role_id
+                role_id:userData.role_id,
             }
         })
     } catch (error) {
@@ -276,3 +312,175 @@ exports.loginUser = async(req,res) =>{
     }
 }
 
+exports.getAllUsers = async (req, res) => {
+  let connection;
+  const { companyName } = req.params;
+  try {
+    connection = await pool.getConnection();
+
+    const [rows] = await connection.query(
+  "SELECT firstName, lastName, email, company, role_id FROM users WHERE company = ? AND role_id IN (?,?,?, ?, ?)",
+  [companyName, 1,2 ,3,4, 5]
+);
+
+    if(rows.length === 0){
+      return res.status(200).json({
+        message:"No Users found"  
+      })
+    }
+    res.status(200).json({
+      success: true,
+      users: rows,
+    });
+  } catch (error) {
+    console.error("Error fetching users:", error);
+    res.status(500).json({
+      success: false,
+      message: "Internal server error",
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.updateUser = async (req, res) => {
+  let connection;
+  const { email } = req.params;
+  const { firstName, lastName, userName, newEmail, role } = req.body;
+
+  try {
+    if (!email) {
+      return res.status(400).json({
+        message: "Email (in params) is required",
+      });
+    }
+
+    connection = await pool.getConnection();
+
+    // Check if user exists
+    const [user] = await connection.query(
+      "SELECT id FROM users WHERE email = ?",
+      [email]
+    );
+
+    if (user.length === 0) {
+      return res.status(404).json({
+        success:false,
+        message: "User not found",
+      });
+    }
+
+    // Update user
+    await connection.query(
+      `UPDATE users 
+       SET firstName = ?, lastName = ?, userName = ?, email = ?, role_id = ? 
+       WHERE email = ?`,
+      [firstName, lastName, userName, newEmail || email, role, email]
+    );
+
+    res.status(200).json({
+      success:true,
+      message: "User updated successfully",
+    });
+  } catch (error) {
+    console.error("Error updating user:", error);
+    res.status(500).json({
+      message: "Internal Server Error",
+      error: error.message,
+    });
+  } finally {
+    if (connection) connection.release();
+  }
+};
+
+exports.deleteUser =async(req,res) =>{
+  let connection
+  const { email } = req.params;
+  try {
+     if (!email) {
+    return res.status(400).json({ success: false, message: "Email is required" });
+    }
+    connection = await pool.getConnection();
+    const [result] = await connection.query(
+      "DELETE FROM users WHERE email = ?",
+      [email]
+    );
+    if (result.affectedRows === 0) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+    return res.status(200).json({ success: true, message: "User deleted successfully" });
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json(error);
+  }finally{
+    if(connection)connection.release();
+  }
+}
+
+exports.getLogoForUser = async(req,res) =>{
+  let connection;
+  const { email } = req.params;
+  try {
+    if(!email){
+      return res.status(409).json({
+        message:"Email is required"
+      })
+    }
+    connection = await pool.getConnection();
+
+   const [row] = await connection.query(
+      "SELECT registered_by FROM users WHERE email = ?",
+      [email]
+    )
+    if(row.length === 0){
+      return res.status(404).json({
+        message:"End User not found"
+      })
+    }
+    const userId = row[0].registered_by;
+
+    const [result] = await connection.query(
+      "SELECT logo FROM users WHERE id = ?",
+      [userId]
+    )
+    const logo = result[0].logo;
+    console.log("logo:",logo);
+    return res.status(200).json({
+      message:"Logo Fetched successfully",
+      logo
+    })
+  } catch (error) {
+    console.log(error);
+    return res.status(500).json(error)
+  }finally{
+    if(connection)connection.release();
+  }
+}
+
+exports.getCompanyLogoByName = async(req,res) =>{
+  let connection;
+  const { companyName } = req.params;
+  try {
+    if(!companyName){
+      return res.status(404).json({
+        message:"Company Name is required"
+      })
+    }
+    connection = await pool.getConnection();
+
+    const [row] = await connection.query(
+      "SELECT logo FROM users WHERE company = ?",
+      [companyName]
+    )
+    const logo = row[0].logo;
+    return res.status(200).json({
+      message:"Logo fetched successfully",
+      logo
+    })
+  } catch (error) {
+    console.log(error.message);
+    return res.status(500).json(error)
+  }finally{
+    if(connection)connection.release();
+  }
+}
