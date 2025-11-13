@@ -3,7 +3,7 @@ const bcrypt = require("bcryptjs");
 const jwt = require('jsonwebtoken');
 const { sendEmail } = require("../service/mail");
 
-const frontendUrl = 'http://198.38.88.235:5179/login'
+const frontendUrl = 'http://164.68.100.175:5177/login'
 
 exports.superAdmin = async(req,res) =>{
     const { email,password } = req.body;
@@ -56,7 +56,7 @@ exports.loginSuperAdmin = async (req, res) => {
 
     const [row] = await connection.query(
       "SELECT id, email, password, role_id FROM users WHERE email = ? AND role_id = ?",
-      [email, 6]
+      [email, 7]
     );
 
     if (row.length === 0) {
@@ -112,7 +112,7 @@ exports.loginCompanyAdmin = async(req,res) =>{
 
         const [row] = await connection.query(
             "SELECT id,email,company,logo,password FROM users WHERE email = ? AND role_id = ?",
-            [email,7]
+            [email,8]
         )
         if(row.length === 0){
             return res.status(409).json({
@@ -151,9 +151,10 @@ exports.loginCompanyAdmin = async(req,res) =>{
 }
 
 exports.registerUser = async(req,res) =>{
-    const {id} = req.user;
-    console.log("userid:",id);
-    const { firstName,lastName,userName,email,password,role,companyName } = req.body;
+    // const {id} = req.user;
+    // console.log("userid:",id);
+    const { firstName,lastName,userName,email,password,role,companyName, registered_by} = req.body;
+    console.log("boddyd",req.body )
 
     let connection
     try {
@@ -207,16 +208,16 @@ exports.registerUser = async(req,res) =>{
         };
 
         const roleName = roleMap[role] || "Unknown";
-        //send email to the user
-        await sendEmail({
-            email:email,
-            credential:`URL:${frontendUrl}/${companyName}, Email: ${email}, Password: ${password}, Role: ${roleName}`
-        });
+        // send email to the user
+        // await sendEmail({
+        //     email:email,
+        //     credential:`URL:${frontendUrl}/${companyName}, Email: ${email}, Password: ${password}, Role: ${roleName}`
+        // });
 
         //store in the database
         await connection.query(
             "INSERT INTO users (firstName,lastName,userName,email,password,role_id,registered_by,company) VALUES(?,?,?,?,?,?,?,?)",
-            [firstName,lastName,userName,email,hashedPassword,role,id,companyName]
+            [firstName,lastName,userName,email,hashedPassword,role, registered_by, companyName]
         )
         
 
@@ -232,6 +233,7 @@ exports.registerUser = async(req,res) =>{
 }
 
 exports.loginUser = async(req,res) =>{
+    console.log("running");
     const { email,password,role_id } = req.body;
     console.log("Body;",req.body);
     let connection

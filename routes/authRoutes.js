@@ -4,7 +4,7 @@ const { verifyToken } = require('../middleware/authMidlleware');
 
 const router = express.Router();
 
-router.post('/register',verifyToken,registerUser);
+router.post('/register',registerUser);
 router.post('/login',loginUser);
 router.post('/add-superAdmin',superAdmin);
 router.post('/login-superAdmin',loginSuperAdmin);
